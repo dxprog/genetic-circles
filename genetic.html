@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html>
+  <body>
+    <canvas id="area" width="500" height="500"></canvas>
+    <script>
+      (function() {
+
+        var NUM_CIRCLES = 15;
+        var MAX_RADIUS = 50;
+        var GENE_POOL = 10;
+        var UINT_32_MAX = Math.pow(2, 32);
+        var STEP_TIMEOUT = 200;
+        var CROSSOVER_RATE = 0.7;
+        var MUTATION_RATE = 0.01;
+
+        var canvas = document.getElementById('area');
+        var context = canvas.getContext('2d');
+        var width = canvas.width;
+        var height = canvas.height;
+
+        var circles = [];
+
+        var genes = [];
+        var currentGene = 0;
+        var generation = 0;
+
+        function createRandomCircle() {
+          return {
+            x: Math.floor(Math.random() * width),
+            y: Math.floor(Math.random() * height),
+            radius: Math.floor(Math.random() * MAX_RADIUS)
+          };
+        }
+
+        function doCirclesOverlap(circle1, circle2) {
+          var minDistance = circle1.radius + circle2.radius;
+          var x = circle1.x - circle2.x;
+          var y = circle1.y - circle2.y;
+          return Math.sqrt(x * x + y * y) < minDistance;
+        }
+
+        function circlesCollisionCheck(circle) {
+          var retVal = false;
+          for (var i = 0, count = circles.length; i < count; i++) {
+            retVal = doCirclesOverlap(circles[i], circle);
+            if (retVal) {
+              break;
+            }
+          }
+          return retVal;
+        }
+
+        function initArea() {
+          var circle = null;
+          for (var i = 0; i < NUM_CIRCLES; i++) {
+            circle = createRandomCircle();
+            while (circlesCollisionCheck(circle)) {
+              circle = createRandomCircle();
+            }
+            circles.push(circle);
+          }
+        }
+
+        function drawCircle(circle, color) {
+          color = color || '#fff';
+          context.beginPath();
+          context.arc(circle.x, circle.y, circle.radius, 0, Math.PI * 2);
+          context.fillStyle = color;
+          context.fill();
+          context.stroke();
+          context.closePath();
+        }
+
+        function drawCircles() {
+          var circle = null;
+          context.clearRect(0, 0, canvas.width, canvas.height);
+          for (var i = 0, count = circles.length; i < count; i++) {
+            drawCircle(circles[i]);
+          }
+        }
+
+        function initGenePool() {
+          for (var i = 0; i < GENE_POOL; i++) {
+            genes.push({
+              genome: (Math.random() * UINT_32_MAX) & 0xffffffff,
+              fitness: 1
+            });
+          }
+        }
+
+        function getGeneFromWheel(genes) {
+          var gene = null;
+          var rand = null;
+          var i = 0;
+          var count = genes.length;
+
+          if (genes.length === 1) {
+            gene = genes.shift();
+          } else {
+            while (!gene) {
+              rand = Math.random();
+              for (i = 0; i < count; i++) {
+                if (genes[i].wheel < rand) {
+                  gene = genes[i];
+                  genes.splice(i, 1);
+                  break;
+                }
+              }
+            }
+          }
+
+          return gene;
+        }
+
+        function makeBabies(parent1, parent2) {
+          var baby1 = null;
+          var baby2 = null;
+          var crossover = Math.floor(Math.random() * 32);
+          var bitmask = Math.pow(2, crossover) - 1;
+
+          var sequenceA = parent1.genome & bitmask;
+          var sequenceB = parent2.genome & (~bitmask);
+          baby1 = {
+            genome: sequenceA | sequenceB,
+            fitness: 1
+          };
+
+          sequenceA = parent2.genome & bitmask;
+          sequenceB = parent1.genome & (~bitmask);
+          baby2 = {
+            genome: sequenceA | sequenceB,
+            fitness: 1
+          };
+
+          return [ baby1, baby2 ];
+        }
+
+        function mutateGene(gene) {
+          var temp = gene.genome;
+          var rand = null;
+          var genome = 0;
+          var bit = null;
+          for (var i = 0; i < 32; i++) {
+            bit = temp & 1;
+            bit = Math.random() <= MUTATION_RATE ? ~bit : bit;
+            genome = (genome << 1) | bit;
+            temp = temp >>> 1;
+          }
+          gene.genome = genome;
+        }
+
+        function prepNextGeneration() {
+          var nextGenes = Array.prototype.slice(genes, 0);
+          var rand = null;
+
+          // Calculate the total fitness for this generation
+          var totalFitness = nextGenes.reduce(function(prev, current) {
+            return prev + current;
+          });
+
+          // Sort by fitness
+          nextGenes.sort(function(a, b) {
+            return a.fitness < b.fitness ? -1 : 1;
+          });
+
+          // Set up the roulette wheel
+          var total = 0;
+          nextGenes.each(function(item) {
+            item.wheel = total + item.fitness / totalFitness;
+            total = item.wheel;
+          });
+
+          // Make the circles fuck
+          var parent1 = null;
+          var parent2 = null;
+          var babies = null;
+          genes = [];
+          for (var i = 0, count = genes.length / 2; i < count; i++) {
+            parent1 = nextGenes.shift();
+
+            // Select a gene from the wheel
+            parent2 = getGeneFromWheel(nextGenes);
+
+            // Crossover rate
+            rand = Math.random();
+            if (rand <= CROSSOVER_RATE) {
+              babies = makeBabies(parent1, parent2);
+              genes = genes.concat(babies);
+            } else {
+              genes.push({
+                genome: parent1.genome,
+                fitness: 1
+              });
+              genes.push({
+                genome: parent2.genome,
+                fitness: 1
+              });
+            }
+          }
+
+          // Now do genetic mutation
+          for (i = 0, count = genes.length; i < count; i++) {
+            mutateGene(genes[i]);
+          }
+
+          generation++;
+          currentGene = 0;
+          setTimeout(step, STEP_TIMEOUT);
+        }
+
+        function step() {
+          var gene = genes[currentGene];
+          var circle = {
+            x: gene.genome & 0x1ff,
+            y: (gene.genome >>> 9) & 0x1ff,
+            radius: (gene.genome >>> 18) & 0x1ff
+          };
+
+          drawCircles();
+          drawCircle(circle, 'red');
+
+          gene.fitness = circlesCollisionCheck(circle) ? 1 : circle.radius;
+
+          if (++currentGene >= genes.length) {
+            prepNextGeneration();
+          } else {
+            setTimeout(step, STEP_TIMEOUT);
+          }
+
+        }
+
+        initArea();
+        initGenePool();
+        drawCircles();
+        step();
+
+      }());
+    </script>
+  </body>
+</html>
